@@ -78,11 +78,23 @@ def generate_customers(n: int = 6000, seed: int = 42) -> pd.DataFrame:
         - 0.20 * active_campaigns                              # product stickiness
     )
     # Month-to-month contracts churn far more than committed contracts.
+    is_m2m = contract_type == "Month-to-month"
     contract_effect = np.where(
-        contract_type == "Month-to-month", 1.1,
-        np.where(contract_type == "Annual", -0.4, -1.0),
+        is_m2m, 1.1, np.where(contract_type == "Annual", -0.4, -1.0),
     )
     score = score + contract_effect
+
+    # --- Non-linear & interaction terms (real churn isn't linear-in-log-odds) ---
+    # These give a tree model something a linear baseline can't capture, so model
+    # selection becomes a meaningful comparison rather than a foregone conclusion.
+    score = (
+        score
+        + 0.07 * support_tickets_90d**2                        # friction accelerates, not linear
+        + 1.3 * price_increase_recent * (tenure_months < 12)   # new customers hate price hikes
+        + 0.9 * is_m2m * (logins_per_week < 2)                 # disengaged + uncommitted compounds
+        + 0.8 * (last_login_days > 30)                         # going-dark threshold effect
+        - 0.6 * (tenure_months > 36) * has_account_manager     # loyal + managed = very sticky
+    )
 
     churn_prob = _sigmoid(score + rng.normal(0, 0.4, n))       # add irreducible noise
     churn = (rng.uniform(0, 1, n) < churn_prob).astype(int)

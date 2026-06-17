@@ -1,0 +1,10 @@
+.git
+.gitignore
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+notebooks/
+tests/
+build_notebook.py
+DECISIONS.md
+data/scored_customers.csv

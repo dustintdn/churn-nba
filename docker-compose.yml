@@ -1,0 +1,23 @@
+# `docker compose up` runs the prediction API and the dashboard together.
+# Both share one image (built once); each overrides the command + port.
+services:
+  api:
+    build: .
+    image: smb-churn-nba
+    ports:
+      - "8000:8000"
+    command: uvicorn src.api:app --host 0.0.0.0 --port 8000
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  dashboard:
+    # Reuse the image the api service builds (no second build).
+    image: smb-churn-nba
+    depends_on:
+      - api
+    ports:
+      - "8501:8501"
+    command: streamlit run app/dashboard.py --server.port 8501 --server.address 0.0.0.0

@@ -1,7 +1,32 @@
 {
-  "pr_auc": 0.4221,
-  "roc_auc": 0.8076,
-  "base_churn_rate": 0.1293,
+  "winner": "xgboost_tuned",
+  "winner_metrics": {
+    "pr_auc": 0.5741,
+    "roc_auc": 0.843
+  },
+  "model_comparison": {
+    "logistic_regression": {
+      "pr_auc": 0.5707,
+      "roc_auc": 0.8479
+    },
+    "xgboost_default": {
+      "pr_auc": 0.5678,
+      "roc_auc": 0.834
+    },
+    "xgboost_tuned": {
+      "pr_auc": 0.5741,
+      "roc_auc": 0.843
+    }
+  },
+  "best_params": {
+    "subsample": 0.7,
+    "reg_lambda": 2.0,
+    "n_estimators": 300,
+    "max_depth": 3,
+    "learning_rate": 0.03,
+    "colsample_bytree": 0.9
+  },
+  "base_churn_rate": 0.1678,
   "n_train": 4800,
   "n_test": 1200
 }
