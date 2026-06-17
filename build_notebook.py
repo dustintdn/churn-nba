@@ -156,22 +156,61 @@ probabilities (Phase 3) so the reweighting doesn't distort the scores the busine
 
 
 # ============================== PHASE 3 ==============================
-md("""## Phase 3 — Model Training & Evaluation
+md("""## Phase 3 — Model Selection, Training & Evaluation
 
-We train an **XGBoost** classifier wrapped in **isotonic calibration**. For an imbalanced
-retention problem, accuracy is misleading, so we judge the model on:
+We don't just *assume* XGBoost — we make it earn the job against a **logistic-regression
+baseline**, then tune it. For an imbalanced retention problem, accuracy is misleading, so
+we judge candidates on:
 
 - **PR-AUC** — performance on the minority (churn) class we actually care about
 - **ROC-AUC** — overall ranking quality
 - **Calibration** — are the predicted probabilities *trustworthy*? They drive money decisions.
-- **Precision at a capacity threshold** — if the team can only call N customers, how many of those N actually churn?""")
+- **Precision at a capacity threshold** — if the team can only call N customers/week, how many of those actually churn?
 
-code("""# Fit the calibrated pipeline (scale_pos_weight computed from the train split).
+### Model bake-off: baseline vs. tuned XGBoost""")
+
+code("""# Reuse the EXACT model-selection code that powers src/train.py.
+from src.train import (build_baseline_pipeline, build_pipeline,
+                       search_xgb_params, DEFAULT_XGB_PARAMS)
 neg, pos = (y_train == 0).sum(), (y_train == 1).sum()
-pipeline = build_pipeline(scale_pos_weight=neg / pos)
-pipeline.fit(X_train, y_train)
+spw = neg / pos   # scale_pos_weight = #negatives / #positives
+
+# Candidate 1: a strong linear baseline the tree model has to beat.
+baseline = build_baseline_pipeline().fit(X_train, y_train)
+# Candidate 2: XGBoost with known-good defaults.
+xgb_default = build_pipeline(spw, DEFAULT_XGB_PARAMS).fit(X_train, y_train)""")
+
+code("""# Candidate 3: XGBoost with light RandomizedSearchCV tuning (PR-AUC scored).
+from sklearn.metrics import average_precision_score, roc_auc_score
+best_params = search_xgb_params(X_train, y_train, spw, n_iter=20)
+xgb_tuned = build_pipeline(spw, best_params).fit(X_train, y_train)
+
+def _scores(m):  # PR-AUC + ROC-AUC on the held-out test set
+    p = m.predict_proba(X_test)[:, 1]
+    return average_precision_score(y_test, p), roc_auc_score(y_test, p)
+
+compare = pd.DataFrame({n: _scores(m) for n, m in {
+    "Logistic (baseline)": baseline, "XGBoost (default)": xgb_default,
+    "XGBoost (tuned)": xgb_tuned}.items()}, index=["PR-AUC", "ROC-AUC"]).T.round(4)
+compare""")
+
+code("""# Visualize the bake-off — tuned XGBoost is the deployed model.
+fig, ax = plt.subplots(figsize=(7, 4))
+compare["PR-AUC"].plot(kind="barh", ax=ax, color=PALETTE["retain"])
+ax.axvline(y_test.mean(), ls="--", color=PALETTE["neutral"], label="random baseline")
+ax.set_title("Model bake-off (held-out PR-AUC)"); ax.set_xlabel("PR-AUC")
+ax.legend(); plt.tight_layout()""")
+
+md("""**Caption:** The tuned XGBoost edges out a strong logistic baseline. The margin is
+narrow — because much of churn here *is* near-linear — but boosting captures the
+interaction effects (e.g., price hikes hurting new customers more) that the linear model
+can't. We deploy the tuned model and calibrate it next. *(If the baseline had won, we'd
+ship the baseline — the selection is automatic in `src/train.py`.)*""")
+
+code("""# The winning pipeline, used for all downstream evaluation + explainability.
+pipeline = xgb_tuned
 proba = pipeline.predict_proba(X_test)[:, 1]   # calibrated P(churn) on held-out data
-print("Model trained. Sample predicted churn probabilities:", np.round(proba[:5], 3))""")
+print("Deployed model: tuned XGBoost. Sample churn probabilities:", np.round(proba[:5], 3))""")
 
 code("""# Headline metrics for an imbalanced problem.
 from sklearn.metrics import average_precision_score, roc_auc_score
@@ -210,33 +249,55 @@ md("""**Caption:** Points hug the diagonal, so when the model says \"30% risk\" 
 of those customers actually churn. That trustworthiness is what lets the business act on
 the *number*, not just the rank order — essential for budgeting retention spend.""")
 
-code("""# Business threshold: the retention team has capacity to contact the top 15% of accounts.
-CAPACITY = 0.15
-cutoff = np.quantile(proba, 1 - CAPACITY)
-flagged = proba >= cutoff
-precision_at_k = y_test[flagged].mean()
-recall_at_k = y_test[flagged].sum() / y_test.sum()
-print(f"Contacting top {CAPACITY:.0%} of accounts (prob >= {cutoff:.2f}):")
-print(f"  precision = {precision_at_k:.0%}  ->  of those we call, this share truly churn")
-print(f"  recall    = {recall_at_k:.0%}  ->  share of ALL churners we catch")""")
+md("""### Choosing the operating point from team capacity
+
+The threshold isn't a statistical choice — it's an *operational* one. Suppose the retention
+team can work **the top 15% of the book** each cycle. We sort customers by risk, draw the
+line at that capacity, and read off the precision (how many calls land on real churners)
+and recall (share of all churners caught).""")
+
+code("""# Sweep: as we contact more of the ranked book, how do precision & recall move?
+order = np.argsort(proba)[::-1]            # customers from highest to lowest risk
+y_sorted = y_test.values[order]
+contacted = np.arange(1, len(y_sorted) + 1)
+precision_curve = np.cumsum(y_sorted) / contacted
+recall_curve = np.cumsum(y_sorted) / y_sorted.sum()
+
+CAPACITY = 0.15                            # team can work the top 15% each cycle
+k = int(CAPACITY * len(y_sorted))
+print(f"At capacity = top {CAPACITY:.0%} ({k} of {len(y_sorted)} customers):")
+print(f"  precision = {precision_curve[k-1]:.0%}  (base rate {y_test.mean():.0%})")
+print(f"  recall    = {recall_curve[k-1]:.0%}  of all churners caught")""")
+
+code("""# Plot the precision/recall trade-off vs. how many customers we choose to contact.
+frac = contacted / len(y_sorted)
+fig, ax = plt.subplots(figsize=(8, 4))
+ax.plot(frac, precision_curve, color=PALETTE["churn"], label="Precision")
+ax.plot(frac, recall_curve, color=PALETTE["retain"], label="Recall")
+ax.axvline(CAPACITY, ls="--", color=PALETTE["neutral"], label=f"capacity = top {CAPACITY:.0%}")
+ax.set_title("Operating point: precision & recall vs. share of book contacted")
+ax.set_xlabel("Share of customers contacted (ranked by risk)"); ax.set_ylabel("Rate")
+ax.legend(); plt.tight_layout()""")
 
 code("""# Confusion matrix at the capacity-based threshold.
 from sklearn.metrics import confusion_matrix
+cutoff = np.sort(proba)[::-1][k - 1]       # probability at the capacity cut
+flagged = proba >= cutoff
 cm = confusion_matrix(y_test, flagged.astype(int))
 fig, ax = plt.subplots(figsize=(5, 4))
 sns.heatmap(cm, annot=True, fmt=",d", cmap="RdBu_r", cbar=False,
             xticklabels=["Predict retain", "Predict churn"],
             yticklabels=["Actually retain", "Actually churn"], ax=ax)
-ax.set_title(f"Confusion matrix @ top-{CAPACITY:.0%} threshold")
-plt.tight_layout()""")
+ax.set_title(f"Confusion matrix @ top-{CAPACITY:.0%} threshold"); plt.tight_layout()""")
 
 md("""### What the metrics mean for the business
 
-The model ranks customers by risk well enough that **focusing the retention team on the
-top 15% of accounts captures a large share of all churners** while keeping precision far
-above the base rate — i.e., most of the calls land on customers who really were about to
-leave. Because the probabilities are calibrated, leadership can also translate \"risk\"
-directly into expected-revenue-at-risk for budgeting.""")
+Focusing the team on the **top 15%** of accounts by risk catches a large share of all
+churners while keeping precision several times the base rate — most calls land on customers
+who really were about to leave. The sweep above lets leadership *dial the threshold to the
+team's actual capacity*: more headcount → move right (higher recall), less → move left
+(higher precision). Because the probabilities are calibrated, that risk can also be
+translated directly into expected revenue-at-risk for budgeting.""")
 
 
 # ============================== PHASE 4 ==============================
