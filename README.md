@@ -1,5 +1,7 @@
 # SMB Churn + Next-Best-Action Engine
 
+[![CI](https://github.com/dustintdn/churn-nba-dev/actions/workflows/ci.yml/badge.svg)](https://github.com/dustintdn/churn-nba-dev/actions/workflows/ci.yml)
+
 > **Which customers are most likely to churn — and what specific action should we take to retain each one?**
 
 A churn model is only half a solution. This project pairs a calibrated churn predictor with a
@@ -32,6 +34,10 @@ dashboard), so the same logic that ran in analysis runs in production.
   "30% risk" score really means ~30% churn.
 - **At the decision threshold:** focusing the retention team on the **top 15%** of accounts by risk
   catches **~52% of all churners** at **~58% precision** — versus 17% if they called at random.
+- **Targeting by dollars, not just risk:** ranking the worklist by *expected net value* instead of
+  churn probability captures **~58% more retention value at the same team budget** (≈$142k vs $90k
+  across the held-out book in the notebook) — because a moderate-risk high-spend account can be worth
+  far more to save than a near-certain-churn low-spend one.
 
 ## From Prediction to Action
 
@@ -39,8 +45,29 @@ The NBA layer reads each at-risk customer's strongest churn driver and recommend
 with a one-line rationale a rep can read aloud. For example, a high-risk account flagged for a
 **recent price increase** with little existing discount is routed to *"Offer a loyalty discount /
 lock-in pricing."* A disengaged account gets re-onboarding outreach; a high-support-volume account
-gets a proactive senior-rep call. The team works a **prioritized, reasoned worklist** instead of a
-flat risk score — and low-risk customers are explicitly left alone to protect retention budget.
+gets a proactive senior-rep call. An **expected-value layer** then prices each action — value at
+risk, expected value saved, net value, and ROI — so the team works a **dollar-prioritized worklist**
+and low-risk customers are explicitly left alone to protect retention budget.
+
+### How the economics work
+
+Each customer's dollar impact is derived from four values:
+
+| Metric | Formula | Example (85% churn risk, $520/mo spend) |
+|---|---|---|
+| **Customer value** | monthly spend × 12-month horizon × 70% gross margin | $520 × 12 × 0.70 = **$4,368** |
+| **Value at risk** | churn probability × customer value | 0.85 × $4,368 = **$3,713** |
+| **Expected value saved** | churn probability × action lift × customer value | 0.85 × 0.30 × $4,368 = **$1,114** |
+| **Net value** | expected value saved − action cost | $1,114 − $150 = **$964** |
+
+The **action lift** (the share of otherwise-churning customers the action saves) and **action cost**
+(one-time cost to execute) vary per action type — for example, a loyalty discount costs $150 with
+a 30% lift, while assigning an account manager costs $500 with a 40% lift. The 70% gross margin
+and 12-month horizon are configurable assumptions in `src/economics.py`.
+
+**These are assumptions, not measured effects.** In production, each action's cost and lift would
+be estimated from holdout A/B experiments. They live in one place (`ACTION_ECONOMICS` in
+`src/economics.py`) so they're easy to tune as real data comes in.
 
 ## Production
 
@@ -49,7 +76,9 @@ The fitted pipeline (`models/churn_model.joblib`) is served by a FastAPI app
 
 - `GET /health` — liveness + model-readiness probe
 - `POST /predict` — accepts a Pydantic-validated customer record; returns the calibrated churn
-  probability **and** the recommended next-best-action
+  probability, the recommended next-best-action, **and** its expected-value economics
+- `POST /predict/batch` — scores a list of records and returns them ranked by expected net value
+  (worklist order)
 
 **Example request:**
 
@@ -83,14 +112,19 @@ curl -X POST http://127.0.0.1:8000/predict \
   "risk_tier": "High",
   "top_driver": "Recent price increase",
   "recommended_action": "Offer a loyalty discount / lock-in pricing",
-  "rationale": "Customer absorbed a recent price increase with little existing discount."
+  "rationale": "Customer absorbed a recent price increase with little existing discount.",
+  "value_at_risk": 3740.38,
+  "expected_value_saved": 1122.11,
+  "net_value": 972.11,
+  "roi": 6.48
 }
 ```
 
 ### Interactive dashboard
 
-For non-engineers, a **Streamlit dashboard** wraps the same model: score one customer from a
-form, or upload a CSV and download a ranked action worklist.
+For non-engineers, a **Streamlit dashboard** wraps the same model: score one customer from a form, or upload a CSV and download a ranked action worklist. Dashboard provides predicted churn probability and risk tier, top risk driver and recommended next-best-action, and the expected-value economics.
+
+![Single-customer scoring in the Streamlit dashboard - churn probability and risk tier, top risk driver and recommended next-best-action, and the expected-value economics.](docs/images/dashboard_single_customer_pred.png)
 
 ```bash
 streamlit run app/dashboard.py     # opens at http://localhost:8501
@@ -144,6 +178,7 @@ smb-churn-nba-engine/
 ├── requirements.txt
 ├── Dockerfile / docker-compose.yml   # API + dashboard, one command
 ├── data/
+│   ├── README.md              # data dictionary (column definitions)
 │   └── customers.csv          # synthetic SMB customer dataset
 ├── notebooks/
 │   └── churn_analysis.ipynb   # 5-phase analysis (EDA -> model -> SHAP -> NBA)
@@ -153,12 +188,15 @@ smb-churn-nba-engine/
 │   ├── generate_data.py       # reproducible synthetic data generator
 │   ├── train.py               # model selection + calibrated pipeline -> joblib
 │   ├── recommend.py           # next-best-action rules layer
+│   ├── economics.py           # expected-value / ROI layer (risk -> dollars)
 │   ├── batch_score.py         # score a whole file into a ranked worklist
 │   └── api.py                 # FastAPI serving app
 ├── tests/                     # NBA rules, API integration, end-to-end model
 └── models/
     └── churn_model.joblib     # serialized serving-ready pipeline
 ```
+
+See [`MODEL_CARD.md`](MODEL_CARD.md) for the model's intended use, training data, evaluation, and limitations.
 
 ## Caveats
 

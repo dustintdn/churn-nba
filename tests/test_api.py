@@ -33,15 +33,19 @@ def test_predict_returns_well_formed_response():
     resp = client.post("/predict", json=VALID_RECORD)
     assert resp.status_code == 200
     body = resp.json()
-    # Shape: all contract fields present.
+    # Shape: all contract fields present (decision + economics).
     for key in ("customer_id", "churn_probability", "risk_tier",
-                "top_driver", "recommended_action", "rationale"):
+                "top_driver", "recommended_action", "rationale",
+                "value_at_risk", "expected_value_saved", "net_value", "roi"):
         assert key in body
     # Types + ranges.
     assert isinstance(body["churn_probability"], float)
     assert 0.0 <= body["churn_probability"] <= 1.0
     assert body["risk_tier"] in {"Low", "Medium", "High"}
     assert body["customer_id"] == "SMB-TEST-1"
+    # Economics: net value is saved minus cost; value-at-risk is non-negative.
+    assert body["value_at_risk"] >= 0
+    assert isinstance(body["net_value"], float)
 
 
 def test_predict_rejects_invalid_record():
@@ -53,4 +57,20 @@ def test_predict_rejects_invalid_record():
 def test_predict_rejects_missing_field():
     incomplete = {k: v for k, v in VALID_RECORD.items() if k != "monthly_spend"}
     resp = client.post("/predict", json=incomplete)
+    assert resp.status_code == 422
+
+
+def test_batch_predict_returns_sorted_worklist():
+    low_value = {**VALID_RECORD, "customer_id": "LOW", "monthly_spend": 150}
+    high_value = {**VALID_RECORD, "customer_id": "HIGH", "monthly_spend": 3000}
+    resp = client.post("/predict/batch", json=[low_value, high_value])
+    assert resp.status_code == 200
+    body = resp.json()
+    assert len(body) == 2
+    # Results are ranked by net value (descending) — worklist order.
+    assert body[0]["net_value"] >= body[1]["net_value"]
+
+
+def test_batch_predict_validates_each_record():
+    resp = client.post("/predict/batch", json=[VALID_RECORD, {**VALID_RECORD, "discount_pct": 999}])
     assert resp.status_code == 422

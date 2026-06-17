@@ -365,17 +365,20 @@ read their dominant SHAP driver and map it — through the transparent rules in
 `src/recommend.py` — to a concrete, costed retention action. The output is a ranked
 worklist the retention team can act on Monday morning.""")
 
-code("""# Score each test customer's SHAP drivers and generate a recommendation.
+code("""# Score each test customer's SHAP drivers, recommend an action, and price it out.
 from src.recommend import recommend_from_shap
+from src.economics import expected_value
 records = X_test.reset_index(drop=True)
 rows = []
 for i in range(len(records)):
     feats = records.iloc[i].to_dict()
     shap_dict = dict(zip(feat_names, shap_exp.values[i]))   # per-feature contribution
     rec = recommend_from_shap(proba[i], feats, shap_dict)
+    ev = expected_value(proba[i], feats["monthly_spend"], rec.action)   # dollars
     rows.append({"churn_probability": round(float(proba[i]), 3),
-                 "top_risk_driver": rec.top_driver,
-                 "recommended_action": rec.action, "risk_tier": rec.risk_tier})
+                 "top_risk_driver": rec.top_driver, "recommended_action": rec.action,
+                 "risk_tier": rec.risk_tier, "monthly_spend": round(feats["monthly_spend"]),
+                 "value_at_risk": ev.value_at_risk, "net_value": ev.net_value})
 reco_df = pd.DataFrame(rows)""")
 
 code("""# The retention worklist: highest-risk customers first, with the action for each.
@@ -396,12 +399,61 @@ md("""### The model doesn't just predict who leaves — it tells the team what t
 Each at-risk account arrives with a **specific, explainable action**: a price-shocked
 customer gets a loyalty discount; a disengaged one gets re-onboarding; a high-ticket
 account gets a proactive support call. The retention team works a *prioritized, reasoned*
-list instead of a flat risk score.
+list instead of a flat risk score.""")
+
+
+# ============================== PHASE 6 ==============================
+md("""## Phase 6 — From Risk to Dollars: Expected-Value Prioritization
+
+Probability answers *who is likely to leave*. The business also needs *who is worth saving,
+and for how much*. The economics layer (`src/economics.py`) converts each prediction into:
+
+- **value at risk** = P(churn) × the customer's margin value over a 12-month horizon
+- **expected value saved** = value at risk × the action's assumed retention lift
+- **net value** = expected value saved − the action's cost
+
+Ranking by **net value** instead of probability changes who the team calls first — and how
+much money the program returns.
+
+> The per-action cost/lift numbers are documented **assumptions**; in practice each would be
+> calibrated from a holdout experiment before the business trusts the dollar figures.""")
+
+code("""# Compare two prioritization strategies on the same retention-team budget.
+BUDGET = 150   # the team can work 150 accounts this cycle
+by_prob = reco_df.sort_values("churn_probability", ascending=False).head(BUDGET)
+by_value = reco_df.sort_values("net_value", ascending=False).head(BUDGET)
+print(f"Targeting the top {BUDGET} accounts by each strategy:")
+print(f"  by churn probability -> expected net value captured = ${by_prob['net_value'].clip(lower=0).sum():,.0f}")
+print(f"  by expected net value -> expected net value captured = ${by_value['net_value'].clip(lower=0).sum():,.0f}")""")
+
+code("""# Visualize the uplift from value-based targeting at the same budget.
+totals = {"By churn probability": by_prob["net_value"].clip(lower=0).sum(),
+          "By expected net value": by_value["net_value"].clip(lower=0).sum()}
+fig, ax = plt.subplots(figsize=(7, 4))
+ax.bar(totals.keys(), totals.values(), color=[PALETTE["neutral"], PALETTE["retain"]])
+ax.set_title(f"Expected net value captured at a {BUDGET}-account budget")
+ax.set_ylabel("Expected net value ($)")
+for i, v in enumerate(totals.values()): ax.text(i, v, f"${v:,.0f}", ha="center", va="bottom")
+plt.tight_layout()""")
+
+code("""# The value-ranked worklist the team actually works — dollars front and center.
+cols = ["churn_probability", "risk_tier", "monthly_spend", "top_risk_driver",
+        "recommended_action", "value_at_risk", "net_value"]
+worklist_by_value = by_value[cols].head(15).reset_index(drop=True)
+worklist_by_value.index.name = "rank"
+worklist_by_value""")
+
+md("""### The model doesn't just rank risk — it ranks **return on retention spend**
+
+Same model, same budget — but targeting by expected net value rather than raw probability
+directs effort toward accounts where intervention recovers the most margin per dollar. A
+near-certain-to-churn \$120/mo account can be worth less to save than a moderate-risk
+\$2,400/mo one; the dollar layer makes that trade-off explicit.
 
 **This exact logic runs in production.** The pipeline trained here is serialized to
 `models/churn_model.joblib` and served by the FastAPI app in `src/api.py`: a `POST /predict`
-takes a raw customer record and returns the calibrated churn probability **and** the
-recommended next-best-action — closing the loop from data to decision.""")
+returns the calibrated churn probability, the recommended next-best-action, **and** its
+expected-value economics — closing the loop from data to a dollar-prioritized decision.""")
 
 
 # ---- assemble + write ----

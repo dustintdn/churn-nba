@@ -18,6 +18,7 @@ import pandas as pd
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
+from src.economics import expected_value
 from src.recommend import recommend_action
 from src.train import CATEGORICAL_FEATURES, MODEL_PATH, NUMERIC_FEATURES
 
@@ -48,13 +49,18 @@ class CustomerRecord(BaseModel):
 
 
 class PredictionResponse(BaseModel):
-    """Structured serving response: the score AND the decision it drives."""
+    """Structured serving response: the score, the decision it drives, and its economics."""
     customer_id: str
     churn_probability: float
     risk_tier: str
     top_driver: str
     recommended_action: str
     rationale: str
+    # Expected-value layer: dollars, so the team can prioritize by ROI not just risk.
+    value_at_risk: float          # expected margin lost if we do nothing
+    expected_value_saved: float   # expected margin the action recovers
+    net_value: float              # expected_value_saved - action cost
+    roi: float | None             # net_value / action cost (null when cost is 0)
 
 
 @lru_cache(maxsize=1)
@@ -80,11 +86,11 @@ def health() -> dict:
     return {"status": "ok", "model_loaded": model_ready}
 
 
-@app.post("/predict", response_model=PredictionResponse)
-def predict(record: CustomerRecord) -> PredictionResponse:
-    """Score one customer and return churn probability + next-best-action."""
-    model = get_model()
+def _score_record(model, record: CustomerRecord) -> PredictionResponse:
+    """Score one validated record -> churn probability + action + economics.
 
+    Shared by the single and batch endpoints so the serving logic lives once.
+    """
     # Build a single-row frame with exactly the columns the pipeline expects.
     raw = record.model_dump()
     features = {k: raw[k] for k in NUMERIC_FEATURES + CATEGORICAL_FEATURES}
@@ -92,9 +98,9 @@ def predict(record: CustomerRecord) -> PredictionResponse:
 
     # Calibrated probability of the positive (churn) class.
     churn_prob = float(model.predict_proba(X)[0, 1])
-
-    # The NBA layer reads the raw record to pick the highest-leverage action.
+    # NBA layer picks the highest-leverage action; economics layer prices it.
     rec = recommend_action(churn_prob, features)
+    ev = expected_value(churn_prob, record.monthly_spend, rec.action)
 
     return PredictionResponse(
         customer_id=record.customer_id,
@@ -103,4 +109,22 @@ def predict(record: CustomerRecord) -> PredictionResponse:
         top_driver=rec.top_driver,
         recommended_action=rec.action,
         rationale=rec.rationale,
+        value_at_risk=ev.value_at_risk,
+        expected_value_saved=ev.expected_value_saved,
+        net_value=ev.net_value,
+        roi=ev.roi,
     )
+
+
+@app.post("/predict", response_model=PredictionResponse)
+def predict(record: CustomerRecord) -> PredictionResponse:
+    """Score one customer and return churn probability + next-best-action + economics."""
+    return _score_record(get_model(), record)
+
+
+@app.post("/predict/batch", response_model=list[PredictionResponse])
+def predict_batch(records: list[CustomerRecord]) -> list[PredictionResponse]:
+    """Score many customers in one call, ranked by expected net value (worklist order)."""
+    model = get_model()
+    scored = [_score_record(model, r) for r in records]
+    return sorted(scored, key=lambda r: r.net_value, reverse=True)

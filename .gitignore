@@ -219,3 +219,6 @@ __marimo__/
 
 # Generated batch scoring output
 data/scored_customers.csv
+
+# macOS
+.DS_Store

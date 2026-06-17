@@ -19,6 +19,7 @@ import pandas as pd
 import streamlit as st
 
 from src.batch_score import score_dataframe
+from src.economics import expected_value
 from src.recommend import recommend_action
 from src.train import CATEGORICAL_FEATURES, MODEL_PATH, NUMERIC_FEATURES
 
@@ -58,12 +59,19 @@ def render_single_customer(model):
         X = pd.DataFrame([rec])[NUMERIC_FEATURES + CATEGORICAL_FEATURES]
         prob = float(model.predict_proba(X)[0, 1])
         action = recommend_action(prob, rec)
+        ev = expected_value(prob, rec["monthly_spend"], action.action)
         m1, m2 = st.columns([1, 2])
         m1.metric("Churn probability", f"{prob:.0%}")
         m1.markdown(f"**Risk tier:** :{_tier_badge(action.risk_tier)}")
         m2.markdown(f"**Top risk driver:** {action.top_driver}")
         m2.markdown(f"**Recommended action:** {action.action}")
         m2.caption(action.rationale)
+        st.divider()
+        e1, e2, e3, e4 = st.columns(4)
+        e1.metric("Value at risk", f"${ev.value_at_risk:,.0f}")
+        e2.metric("Expected value saved", f"${ev.expected_value_saved:,.0f}")
+        e3.metric("Action cost", f"${ev.action_cost:,.0f}")
+        e4.metric("Net value", f"${ev.net_value:,.0f}")
 
 
 def _tier_badge(tier: str) -> str:

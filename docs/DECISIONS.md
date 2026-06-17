@@ -65,3 +65,32 @@ story, we can add more interaction structure to the simulation.
 The notebook was rebuilt/re-run against the enriched dataset and new model
 comparison so its numbers match the current `metrics.json`. The README metrics
 were updated to match as well.
+
+---
+
+# Follow-ups (second PR, stacked on the first)
+
+## 10. Expected-value / ROI layer assumptions
+**Biggest judgment call in this PR.** `src/economics.py` prices each action with a
+**cost** and a **retention lift**, plus a 70% gross margin and a 12-month value
+horizon. **These are invented assumptions, not measured effects** — chosen to be
+plausible and to demonstrate value-based prioritization. They're centralized so
+they're easy to tune, and the README/model card flag that real numbers must come
+from holdout experiments. Review whether the relative magnitudes match your
+intuition for the SMB-advertiser framing.
+
+## 11. Worklist now ranks by net value by default
+`batch_score` and `/predict/batch` rank by **expected net value** rather than churn
+probability by default (`--rank-by` can switch back). This follows directly from
+the EV layer; flagged because it changes the default "who to call first" ordering.
+
+## 12. CI installs the full requirements.txt
+The GitHub Actions workflow installs everything (incl. xgboost/shap/streamlit) and
+runs ruff + pytest + a fast-mode training smoke check. Heavier than a minimal test
+env but simplest and closest to how the repo actually runs. Tests run against the
+committed artifact *before* the smoke check clobbers it locally.
+
+## 13. Scope kept tight
+Deliberately did NOT add: a Makefile (skipped per your selection), drift-monitoring
+code, or auth on the API — these felt like overengineering for a portfolio piece.
+Easy to add if you want them.
