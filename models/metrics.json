@@ -1,0 +1,7 @@
+{
+  "pr_auc": 0.4221,
+  "roc_auc": 0.8076,
+  "base_churn_rate": 0.1293,
+  "n_train": 4800,
+  "n_test": 1200
+}
