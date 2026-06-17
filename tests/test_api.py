@@ -5,7 +5,6 @@ prediction (asserting response shape + types), and validation rejection of a bad
 record. Requires a trained model artifact (run `python src/train.py --fast`).
 """
 
-import pytest
 from fastapi.testclient import TestClient
 
 from src.api import app

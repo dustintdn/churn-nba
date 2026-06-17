@@ -66,7 +66,7 @@ def get_model():
         raise HTTPException(
             status_code=503,
             detail=f"Model artifact not found at {MODEL_PATH}. Run `python src/train.py` first.",
-        )
+        ) from None
 
 
 @app.get("/health")

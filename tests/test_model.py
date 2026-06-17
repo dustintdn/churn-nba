@@ -7,10 +7,8 @@ produces a usable pipeline. These guard the train -> serialize -> serve boundary
 
 import joblib
 import pandas as pd
-import pytest
 
-from src.train import (CATEGORICAL_FEATURES, MODEL_PATH, NUMERIC_FEATURES,
-                       load_data, train)
+from src.train import CATEGORICAL_FEATURES, MODEL_PATH, NUMERIC_FEATURES, load_data, train
 
 ONE_RECORD = pd.DataFrame([{
     "tenure_months": 3, "monthly_spend": 420.5, "logins_per_week": 0.5,

@@ -16,8 +16,7 @@ import joblib
 import pandas as pd
 
 from src.recommend import recommend_action
-from src.train import (CATEGORICAL_FEATURES, ID_COL, MODEL_PATH,
-                       NUMERIC_FEATURES, load_data)
+from src.train import CATEGORICAL_FEATURES, ID_COL, MODEL_PATH, NUMERIC_FEATURES, load_data
 
 
 def score_dataframe(df: pd.DataFrame, model=None) -> pd.DataFrame:
@@ -35,7 +34,7 @@ def score_dataframe(df: pd.DataFrame, model=None) -> pd.DataFrame:
 
     # Per-row recommendation from the raw record (no SHAP needed for batch use).
     recs = [recommend_action(p, row) for p, row in
-            zip(df["churn_probability"], features.to_dict("records"))]
+            zip(df["churn_probability"], features.to_dict("records"), strict=True)]
     df["risk_tier"] = [r.risk_tier for r in recs]
     df["top_risk_driver"] = [r.top_driver for r in recs]
     df["recommended_action"] = [r.action for r in recs]
