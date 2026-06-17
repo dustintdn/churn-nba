@@ -29,3 +29,25 @@ the winner is XGBoost (true on the current data).
 **Decision:** Kept the search small so `python src/train.py` finishes in ~30s and
 a `--fast` flag skips it entirely for CI/tests. Enough to show tuning rigor
 without a multi-hour grid that adds no portfolio signal.
+
+## 4. Scripts run as modules (`python -m src.batch_score`)
+**Decision:** `batch_score.py` and the dashboard import from the `src` package,
+so they're invoked as modules from the repo root rather than as loose files.
+Documented in the README and docstrings. Avoids `sys.path` hacks in `src/`.
+
+## 5. Docker build not verified in this environment
+**Decision:** Wrote a standard `Dockerfile` + `docker-compose.yml` (API + dashboard
+sharing one image). `docker compose config` validates the compose file, but the
+**image build is blocked here** — the sandbox network policy returns 403 from the
+Docker registry CDN, so `python:3.11-slim` can't be pulled. The files are standard
+and should build in a normal environment; please verify `docker compose up` locally.
+
+## 6. Streamlit dashboard verified by headless boot only
+**Decision:** Confirmed the dashboard boots (HTTP 200) and that its shared
+`score_dataframe` path works, but I did not click through the UI interactively.
+Worth a manual smoke test before you showcase it.
+
+## 7. Notebook re-execution
+The notebook was rebuilt/re-run against the enriched dataset and new model
+comparison so its numbers match the current `metrics.json`. The README metrics
+were updated to match as well.
