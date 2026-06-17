@@ -58,19 +58,19 @@ curl -X POST http://127.0.0.1:8000/predict \
   -H "Content-Type: application/json" \
   -d '{
     "customer_id": "SMB-00042",
-    "tenure_months": 3,
+    "tenure_months": 14,
     "contract_type": "Month-to-month",
     "plan_tier": "Growth",
-    "payment_method": "Manual invoice",
-    "monthly_spend": 420.50,
-    "logins_per_week": 0.5,
-    "last_login_days": 34,
-    "active_campaigns": 1,
-    "support_tickets_90d": 4,
-    "discount_pct": 2.0,
+    "payment_method": "Credit card",
+    "monthly_spend": 520,
+    "logins_per_week": 3.0,
+    "last_login_days": 12,
+    "active_campaigns": 3,
+    "support_tickets_90d": 1,
+    "discount_pct": 5.0,
     "price_increase_recent": 1,
     "has_account_manager": 0,
-    "nps_score": -20
+    "nps_score": 20
   }'
 ```
 
@@ -79,7 +79,7 @@ curl -X POST http://127.0.0.1:8000/predict \
 ```json
 {
   "customer_id": "SMB-00042",
-  "churn_probability": 0.9996,
+  "churn_probability": 0.8563,
   "risk_tier": "High",
   "top_driver": "Recent price increase",
   "recommended_action": "Offer a loyalty discount / lock-in pricing",
