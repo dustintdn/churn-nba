@@ -47,7 +47,21 @@ and should build in a normal environment; please verify `docker compose up` loca
 `score_dataframe` path works, but I did not click through the UI interactively.
 Worth a manual smoke test before you showcase it.
 
-## 7. Notebook re-execution
+## 7. Bug fixed: tests no longer clobber the deployed artifact
+**Found during review:** the end-to-end model test called `train(fast=True)`, which
+overwrote `models/churn_model.joblib` + `metrics.json` with a fast-mode (no-search)
+run — and in fast mode the logistic baseline narrowly wins, so the *committed* model
+had silently become logistic regression while the notebook/README described tuned
+XGBoost. **Fix:** `train()` now takes `model_path`/`metrics_path`, and the test trains
+to a `tmp_path`. Retrained properly so the deployed artifact is the tuned XGBoost again.
+
+## 8. Note: XGBoost wins by a thin margin
+On the current data the tuned XGBoost (PR-AUC 0.574) beats the logistic baseline
+(0.571) only narrowly. That's honest and realistic; I deliberately did not over-tune
+the DGP to manufacture a bigger gap. If you'd prefer a wider margin for the portfolio
+story, we can add more interaction structure to the simulation.
+
+## 9. Notebook re-execution
 The notebook was rebuilt/re-run against the enriched dataset and new model
 comparison so its numbers match the current `metrics.json`. The README metrics
 were updated to match as well.

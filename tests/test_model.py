@@ -30,11 +30,14 @@ def test_saved_model_scores_one_record_end_to_end():
 
 
 def test_training_produces_usable_model(tmp_path):
-    # Train on a small sample in fast mode; assert it beats the trivial baseline.
-    metrics = train(fast=True)
+    # Train in fast mode to a TEMP path so the committed artifact is never clobbered.
+    metrics = train(fast=True,
+                    model_path=str(tmp_path / "m.joblib"),
+                    metrics_path=str(tmp_path / "metrics.json"))
     assert metrics["winner_metrics"]["pr_auc"] > metrics["base_churn_rate"]
     assert 0.0 <= metrics["winner_metrics"]["roc_auc"] <= 1.0
     assert metrics["winner"] in metrics["model_comparison"]
+    assert (tmp_path / "m.joblib").exists()
 
 
 def test_load_data_has_no_nulls_in_features():

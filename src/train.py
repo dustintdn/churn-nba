@@ -130,8 +130,13 @@ def load_data(path: str = "data/customers.csv") -> pd.DataFrame:
     return df.dropna(subset=[TARGET])
 
 
-def train(data_path: str = "data/customers.csv", fast: bool = False) -> dict:
-    """Compare candidate models, calibrate + persist the winner, log the comparison."""
+def train(data_path: str = "data/customers.csv", fast: bool = False,
+          model_path: str = MODEL_PATH, metrics_path: str = METRICS_PATH) -> dict:
+    """Compare candidate models, calibrate + persist the winner, log the comparison.
+
+    model_path/metrics_path are parameterized so tests can train to a temp location
+    without clobbering the committed production artifact.
+    """
     df = load_data(data_path)
     X = df[NUMERIC_FEATURES + CATEGORICAL_FEATURES]
     y = df[TARGET].astype(int)
@@ -173,12 +178,12 @@ def train(data_path: str = "data/customers.csv", fast: bool = False) -> dict:
         "n_train": int(len(X_train)), "n_test": int(len(X_test)),
     }
 
-    os.makedirs("models", exist_ok=True)
-    joblib.dump(winner, MODEL_PATH)
-    with open(METRICS_PATH, "w") as f:
+    os.makedirs(os.path.dirname(model_path) or ".", exist_ok=True)
+    joblib.dump(winner, model_path)
+    with open(metrics_path, "w") as f:
         json.dump(metrics, f, indent=2)
 
-    print(f"Saved model -> {MODEL_PATH}  (winner: {winner_name})")
+    print(f"Saved model -> {model_path}  (winner: {winner_name})")
     for name, m in comparison.items():
         flag = "  <-- deployed" if name == winner_name else ""
         print(f"  {name:22s} PR-AUC={m['pr_auc']:.4f}  ROC-AUC={m['roc_auc']:.4f}{flag}")
