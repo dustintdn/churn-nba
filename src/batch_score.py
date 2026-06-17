@@ -20,13 +20,17 @@ from src.train import (CATEGORICAL_FEATURES, ID_COL, MODEL_PATH,
                        NUMERIC_FEATURES, load_data)
 
 
-def score_file(input_path: str, output_path: str, top: int | None = None) -> pd.DataFrame:
-    """Load customers, score every row, attach the next-best-action, write ranked CSV."""
-    model = joblib.load(MODEL_PATH)
-    df = load_data(input_path)  # reuses the same null-handling as training
+def score_dataframe(df: pd.DataFrame, model=None) -> pd.DataFrame:
+    """Score a customer DataFrame in memory and return it ranked with actions.
+
+    Shared by the batch CLI and the Streamlit dashboard so scoring logic lives in
+    exactly one place. Expects the raw feature columns; tolerates an optional id.
+    """
+    model = model or joblib.load(MODEL_PATH)
 
     # One vectorized scoring pass for calibrated churn probabilities.
     features = df[NUMERIC_FEATURES + CATEGORICAL_FEATURES]
+    df = df.copy()
     df["churn_probability"] = model.predict_proba(features)[:, 1].round(4)
 
     # Per-row recommendation from the raw record (no SHAP needed for batch use).
@@ -36,10 +40,15 @@ def score_file(input_path: str, output_path: str, top: int | None = None) -> pd.
     df["top_risk_driver"] = [r.top_driver for r in recs]
     df["recommended_action"] = [r.action for r in recs]
 
-    # Rank riskiest first — the order the retention team works the list.
     out_cols = ([ID_COL] if ID_COL in df.columns else []) + [
         "churn_probability", "risk_tier", "top_risk_driver", "recommended_action"]
-    ranked = df.sort_values("churn_probability", ascending=False)[out_cols]
+    return df.sort_values("churn_probability", ascending=False)[out_cols]
+
+
+def score_file(input_path: str, output_path: str, top: int | None = None) -> pd.DataFrame:
+    """Load customers, score every row, attach the next-best-action, write ranked CSV."""
+    df = load_data(input_path)  # reuses the same null-handling as training
+    ranked = score_dataframe(df)
     if top:
         ranked = ranked.head(top)
 
