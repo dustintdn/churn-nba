@@ -122,11 +122,30 @@ def _evaluate(pipeline, X_test, y_test) -> dict:
             "roc_auc": round(float(roc_auc_score(y_test, proba)), 4)}
 
 
-def load_data(path: str = "data/customers.csv") -> pd.DataFrame:
-    """Load the customer table, impute the only missing column, drop unlabeled rows."""
-    df = pd.read_csv(path)
+def impute_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Apply the feature prep shared by training and scoring (median-fill NPS).
+
+    Deliberately does NOT touch the target: scoring files have no churn column,
+    so anything label-related belongs in load_data, not here.
+    """
+    df = df.copy()
     df["nps_score"] = df["nps_score"].fillna(df["nps_score"].median())
+    return df
+
+
+def load_data(path: str = "data/customers.csv") -> pd.DataFrame:
+    """Load the labeled training table: impute features, then drop unlabeled rows."""
+    df = impute_features(pd.read_csv(path))
     return df.dropna(subset=[TARGET])
+
+
+def load_scoring_data(path: str) -> pd.DataFrame:
+    """Load a customer file for scoring: impute features, keep every row.
+
+    Unlike load_data this makes no assumption that a `churn` column exists — a real
+    scoring export is exactly the set of customers whose churn outcome is unknown.
+    """
+    return impute_features(pd.read_csv(path))
 
 
 def train(data_path: str = "data/customers.csv", fast: bool = False,

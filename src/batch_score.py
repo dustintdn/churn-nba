@@ -17,7 +17,13 @@ import pandas as pd
 
 from src.economics import expected_value
 from src.recommend import recommend_action
-from src.train import CATEGORICAL_FEATURES, ID_COL, MODEL_PATH, NUMERIC_FEATURES, load_data
+from src.train import (
+    CATEGORICAL_FEATURES,
+    ID_COL,
+    MODEL_PATH,
+    NUMERIC_FEATURES,
+    load_scoring_data,
+)
 
 
 def score_dataframe(df: pd.DataFrame, model=None, rank_by: str = "net_value") -> pd.DataFrame:
@@ -59,7 +65,7 @@ def score_dataframe(df: pd.DataFrame, model=None, rank_by: str = "net_value") ->
 def score_file(input_path: str, output_path: str, top: int | None = None,
                rank_by: str = "net_value") -> pd.DataFrame:
     """Load customers, score every row, attach the next-best-action, write ranked CSV."""
-    df = load_data(input_path)  # reuses the same null-handling as training
+    df = load_scoring_data(input_path)  # feature prep only — no churn label required
     ranked = score_dataframe(df, rank_by=rank_by)
     if top:
         ranked = ranked.head(top)
