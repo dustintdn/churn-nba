@@ -21,7 +21,7 @@ import streamlit as st
 from src.batch_score import score_dataframe
 from src.economics import expected_value
 from src.recommend import recommend_action
-from src.train import CATEGORICAL_FEATURES, MODEL_PATH, NUMERIC_FEATURES
+from src.train import CATEGORICAL_FEATURES, MODEL_PATH, NUMERIC_FEATURES, impute_features
 
 # Brand-consistent risk colors (match the notebook palette).
 TIER_COLOR = {"High": "#D1495B", "Medium": "#E8A87C", "Low": "#2E86AB"}
@@ -86,8 +86,22 @@ def render_batch(model):
                "(see data/customers.csv). Rows are ranked by churn risk.")
     upload = st.file_uploader("Customer CSV", type="csv")
     if upload is not None:
-        df = pd.read_csv(upload)
-        df["nps_score"] = df["nps_score"].fillna(df["nps_score"].median())
+        try:
+            df = pd.read_csv(upload)
+        except Exception as exc:  # malformed / non-CSV upload
+            st.error(f"Couldn't read that file as CSV: {exc}")
+            return
+
+        missing = [c for c in NUMERIC_FEATURES + CATEGORICAL_FEATURES if c not in df.columns]
+        if missing:
+            st.error(
+                "Uploaded CSV is missing required column(s): "
+                f"**{', '.join(missing)}**. Expected the standard customer columns "
+                "(see data/customers.csv)."
+            )
+            return
+
+        df = impute_features(df)  # median-fill scattered NPS nulls, same as scoring
         ranked = score_dataframe(df, model)
         st.dataframe(ranked, use_container_width=True, hide_index=True)
         st.download_button("Download ranked worklist (CSV)",
