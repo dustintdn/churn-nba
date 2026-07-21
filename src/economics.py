@@ -1,8 +1,4 @@
-"""Expected-value layer: translate churn risk + an action into dollars.
-
-A churn probability tells you *who* is at risk; the recommended action tells you
-*what to do*. This module adds the third question a business actually asks:
-**is the intervention worth it, and which customers return the most per dollar?**
+"""Expected-value layer: translate churn risk and a recommended action into dollars.
 
 For each customer we estimate:
     value at risk        = P(churn) x customer value over the horizon
@@ -10,19 +6,19 @@ For each customer we estimate:
     net value of action  = expected value saved - action cost
     ROI                  = net value / action cost
 
-Ranking by *net value* (not raw probability) is the key business insight: a
-moderate-risk, high-spend account can be worth far more to save than a
-near-certain-churn, low-spend one.
+Ranking the worklist by net value rather than raw probability matters because a
+moderate-risk, high-spend account can be worth more to save than a near-certain
+churner with low spend.
 
-IMPORTANT: the per-action cost and lift numbers below are **assumptions**, not
-measured effects. In production each would be estimated from a holdout
-experiment (see README caveats). They live in one place so they're easy to tune.
+The per-action cost and lift numbers below are assumptions, not measured
+effects. In production each would come from a holdout experiment (see README
+caveats). They are kept in one place so they're easy to replace.
 """
 
 from dataclasses import asdict, dataclass
 
-# Assumed economics per recommended action: one-time cost ($) to execute, and the
-# retention "lift" = the share of otherwise-churning customers the action saves.
+# Assumed economics per action: one-time cost ($) to execute, and retention
+# "lift" = the share of otherwise-churning customers the action saves.
 ACTION_ECONOMICS = {
     "Offer a loyalty discount / lock-in pricing": {"cost": 150, "lift": 0.30},
     "Proactive support call from a senior rep":   {"cost": 80,  "lift": 0.25},
@@ -36,8 +32,8 @@ ACTION_ECONOMICS = {
 # Fallback for any unmapped action label.
 _DEFAULT_ECON = {"cost": 50, "lift": 0.15}
 
-# Assumptions for converting spend into the value we're protecting.
-GROSS_MARGIN = 0.70        # share of revenue that is margin (what we actually lose)
+# Assumptions for converting spend into protected value.
+GROSS_MARGIN = 0.70        # share of revenue that is margin
 HORIZON_MONTHS = 12        # value horizon for an avoided churn
 
 
@@ -61,11 +57,11 @@ def expected_value(churn_prob: float, monthly_spend: float, action: str,
     """Compute the dollar economics of taking `action` on one customer."""
     econ = ACTION_ECONOMICS.get(action, _DEFAULT_ECON)
 
-    # Margin value we stand to lose if this customer churns over the horizon.
+    # Margin value lost if this customer churns over the horizon.
     customer_value = monthly_spend * horizon_months * margin
     value_at_risk = churn_prob * customer_value
 
-    # The action only recovers a fraction (its lift) of the at-risk value.
+    # The action recovers a fraction (its lift) of the at-risk value.
     expected_value_saved = churn_prob * econ["lift"] * customer_value
     net_value = expected_value_saved - econ["cost"]
     roi = (net_value / econ["cost"]) if econ["cost"] else None

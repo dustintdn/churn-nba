@@ -1,9 +1,8 @@
 """FastAPI serving layer for the SMB churn + next-best-action engine.
 
-This is the model-to-production boundary: a raw customer record comes in over
-HTTP, gets validated by a Pydantic schema, scored by the SAME pipeline that was
-trained offline, and comes back with both a calibrated churn probability and a
-concrete recommended action.
+A raw customer record comes in over HTTP, gets validated by a Pydantic schema,
+is scored by the same pipeline that was trained offline, and comes back with a
+calibrated churn probability, a recommended action, and its economics.
 
 Run locally:
     uvicorn src.api:app --reload
@@ -30,8 +29,8 @@ app = FastAPI(
 
 
 class CustomerRecord(BaseModel):
-    """Validated inbound customer record. Field constraints reject bad data
-    at the edge so the model never sees nonsense (negative tenure, etc.)."""
+    """Inbound customer record. Field constraints reject invalid values
+    (negative tenure, out-of-range NPS, etc.) before scoring."""
     customer_id: str = Field(..., examples=["SMB-00042"])
     tenure_months: int = Field(..., ge=0, le=600)
     contract_type: str = Field(..., examples=["Month-to-month"])
@@ -49,14 +48,14 @@ class CustomerRecord(BaseModel):
 
 
 class PredictionResponse(BaseModel):
-    """Structured serving response: the score, the decision it drives, and its economics."""
+    """Serving response: the score, the recommended action, and its economics."""
     customer_id: str
     churn_probability: float
     risk_tier: str
     top_driver: str
     recommended_action: str
     rationale: str
-    # Expected-value layer: dollars, so the team can prioritize by ROI not just risk.
+    # Expected-value fields (see src/economics.py).
     value_at_risk: float          # expected margin lost if we do nothing
     expected_value_saved: float   # expected margin the action recovers
     net_value: float              # expected_value_saved - action cost
@@ -89,16 +88,14 @@ def health() -> dict:
 def _score_record(model, record: CustomerRecord) -> PredictionResponse:
     """Score one validated record -> churn probability + action + economics.
 
-    Shared by the single and batch endpoints so the serving logic lives once.
+    Shared by the single and batch endpoints.
     """
     # Build a single-row frame with exactly the columns the pipeline expects.
     raw = record.model_dump()
     features = {k: raw[k] for k in NUMERIC_FEATURES + CATEGORICAL_FEATURES}
     X = pd.DataFrame([features])
 
-    # Calibrated probability of the positive (churn) class.
     churn_prob = float(model.predict_proba(X)[0, 1])
-    # NBA layer picks the highest-leverage action; economics layer prices it.
     rec = recommend_action(churn_prob, features)
     ev = expected_value(churn_prob, record.monthly_spend, rec.action)
 

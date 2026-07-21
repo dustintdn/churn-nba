@@ -1,14 +1,12 @@
 """Train the SMB churn model and serialize a serving-ready pipeline.
 
-The artifact saved to models/churn_model.joblib is a single sklearn object that
-bundles preprocessing + a calibrated classifier. Because preprocessing travels
-WITH the model, the FastAPI layer can hand it a raw customer record and get a
-trustworthy probability back — no feature-engineering drift between training and
-serving.
+The artifact saved to models/churn_model.joblib is a single sklearn object
+bundling preprocessing and a calibrated classifier, so the serving layer can
+score raw customer records with the same transformations used in training.
 
-Model selection (not just "use XGBoost"):
-    1. Fit a logistic-regression BASELINE so any tree model has to earn its keep.
-    2. Run a light RandomizedSearchCV over XGBoost hyperparameters (PR-AUC scored).
+Model selection:
+    1. Fit a logistic-regression baseline.
+    2. Run a small RandomizedSearchCV over XGBoost hyperparameters (PR-AUC scored).
     3. Compare baseline / default-XGB / tuned-XGB on a held-out split.
     4. Calibrate and persist the winner. The comparison is logged to metrics.json.
 
@@ -32,7 +30,7 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 from xgboost import XGBClassifier
 
-# Column groups — declared once and reused by the API so schemas never drift.
+# Column groups, shared with the API and batch scorer.
 NUMERIC_FEATURES = [
     "tenure_months", "monthly_spend", "logins_per_week", "last_login_days",
     "active_campaigns", "support_tickets_90d", "discount_pct",
@@ -53,7 +51,7 @@ DEFAULT_XGB_PARAMS = dict(
 
 
 def build_preprocessor() -> ColumnTransformer:
-    """Scale numerics + one-hot categoricals. Shared by every candidate model."""
+    """Scale numeric features and one-hot encode categoricals."""
     return ColumnTransformer(
         transformers=[
             ("num", StandardScaler(), NUMERIC_FEATURES),
@@ -63,7 +61,7 @@ def build_preprocessor() -> ColumnTransformer:
 
 
 def make_xgb(scale_pos_weight: float, params: dict | None = None) -> XGBClassifier:
-    """Construct an XGBoost classifier with imbalance reweighting baked in."""
+    """Construct an XGBoost classifier with class-imbalance reweighting."""
     return XGBClassifier(
         **(params or DEFAULT_XGB_PARAMS),
         scale_pos_weight=scale_pos_weight,
@@ -72,10 +70,10 @@ def make_xgb(scale_pos_weight: float, params: dict | None = None) -> XGBClassifi
 
 
 def build_pipeline(scale_pos_weight: float, params: dict | None = None) -> Pipeline:
-    """Preprocessing + isotonic-calibrated XGBoost as one fitted-as-a-unit pipeline.
+    """Build the preprocessing + isotonic-calibrated XGBoost pipeline.
 
-    Kept as the canonical builder used by the notebook and tests. Calibration
-    makes the probabilities the NBA layer consumes honest, not just rank-ordered.
+    Used by train(), the notebook, and the tests. Calibration matters because
+    the economics layer multiplies these probabilities by dollar amounts.
     """
     xgb = make_xgb(scale_pos_weight, params)
     calibrated = CalibratedClassifierCV(xgb, method="isotonic", cv=3)
@@ -83,16 +81,16 @@ def build_pipeline(scale_pos_weight: float, params: dict | None = None) -> Pipel
 
 
 def build_baseline_pipeline() -> Pipeline:
-    """Logistic-regression baseline — the bar XGBoost must clear to be worth it."""
+    """Logistic-regression baseline for the model comparison."""
     logreg = LogisticRegression(max_iter=1000, class_weight="balanced")
     return Pipeline([("prep", build_preprocessor()), ("clf", logreg)])
 
 
 def search_xgb_params(X_train, y_train, scale_pos_weight: float, n_iter: int = 25) -> dict:
-    """Light RandomizedSearchCV over XGBoost hyperparameters, scored on PR-AUC.
+    """RandomizedSearchCV over XGBoost hyperparameters, scored on PR-AUC.
 
-    Returns the best params dict. We search the uncalibrated tree (calibration is
-    applied afterward) so the search stays fast and focused on ranking quality.
+    Searches the uncalibrated model (calibration is applied afterward) to keep
+    the search fast. Returns the best params dict.
     """
     search_space = {
         "n_estimators": [200, 300, 400, 600, 800],
@@ -123,10 +121,10 @@ def _evaluate(pipeline, X_test, y_test) -> dict:
 
 
 def impute_features(df: pd.DataFrame) -> pd.DataFrame:
-    """Apply the feature prep shared by training and scoring (median-fill NPS).
+    """Feature prep shared by training and scoring (median-fill NPS).
 
-    Deliberately does NOT touch the target: scoring files have no churn column,
-    so anything label-related belongs in load_data, not here.
+    Does not touch the target column: scoring files have no churn label, so
+    label handling belongs in load_data.
     """
     df = df.copy()
     df["nps_score"] = df["nps_score"].fillna(df["nps_score"].median())
@@ -142,18 +140,18 @@ def load_data(path: str = "data/customers.csv") -> pd.DataFrame:
 def load_scoring_data(path: str) -> pd.DataFrame:
     """Load a customer file for scoring: impute features, keep every row.
 
-    Unlike load_data this makes no assumption that a `churn` column exists — a real
-    scoring export is exactly the set of customers whose churn outcome is unknown.
+    Unlike load_data, this does not require a `churn` column, since scoring
+    files are customers whose outcome is unknown.
     """
     return impute_features(pd.read_csv(path))
 
 
 def train(data_path: str = "data/customers.csv", fast: bool = False,
           model_path: str = MODEL_PATH, metrics_path: str = METRICS_PATH) -> dict:
-    """Compare candidate models, calibrate + persist the winner, log the comparison.
+    """Compare candidate models, persist the winner, and log the comparison.
 
-    model_path/metrics_path are parameterized so tests can train to a temp location
-    without clobbering the committed production artifact.
+    model_path/metrics_path are parameterized so tests can train to a temp
+    location without overwriting the committed artifact.
     """
     df = load_data(data_path)
     X = df[NUMERIC_FEATURES + CATEGORICAL_FEATURES]
@@ -180,8 +178,7 @@ def train(data_path: str = "data/customers.csv", fast: bool = False,
     tuned = build_pipeline(spw, best_params).fit(X_train, y_train)
     comparison["xgboost_tuned"] = _evaluate(tuned, X_test, y_test)
 
-    # Deploy whichever candidate actually wins on PR-AUC (real model selection,
-    # not "XGBoost because we said so"). Fitted candidates kept for selection.
+    # Deploy whichever candidate wins on held-out PR-AUC.
     fitted = {"logistic_regression": baseline,
               "xgboost_default": xgb_default, "xgboost_tuned": tuned}
     winner_name = max(comparison, key=lambda k: comparison[k]["pr_auc"])

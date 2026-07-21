@@ -1,8 +1,7 @@
-"""Batch scoring: score a whole customer file and emit a ranked action worklist.
+"""Batch scoring: score a customer file and write a ranked action worklist.
 
-This is how the engine is actually used day-to-day: point it at the current
-customer export, get back a CSV sorted by churn risk with the recommended
-next-best-action per row — ready for the retention team to work top-down.
+Point it at a customer export and get back a CSV sorted by expected net value
+(or churn probability), with a recommended action per row.
 
 Usage (run as a module from the repo root so `src` imports resolve):
     python -m src.batch_score                                   # data/customers.csv -> data/scored_customers.csv
@@ -27,15 +26,14 @@ from src.train import (
 
 
 def score_dataframe(df: pd.DataFrame, model=None, rank_by: str = "net_value") -> pd.DataFrame:
-    """Score a customer DataFrame in memory and return it ranked with actions + economics.
+    """Score a customer DataFrame and return it ranked with actions + economics.
 
-    Shared by the batch CLI and the Streamlit dashboard so scoring logic lives in
-    exactly one place. `rank_by` chooses the worklist order: "net_value" (expected
-    dollars saved net of cost — the default) or "churn_probability".
+    Shared by the batch CLI and the Streamlit dashboard. `rank_by` chooses the
+    worklist order: "net_value" (default) or "churn_probability".
     """
     model = model or joblib.load(MODEL_PATH)
 
-    # One vectorized scoring pass for calibrated churn probabilities.
+    # Vectorized scoring pass for calibrated churn probabilities.
     features = df[NUMERIC_FEATURES + CATEGORICAL_FEATURES]
     df = df.copy()
     df["churn_probability"] = model.predict_proba(features)[:, 1].round(4)
@@ -47,7 +45,7 @@ def score_dataframe(df: pd.DataFrame, model=None, rank_by: str = "net_value") ->
     df["top_risk_driver"] = [r.top_driver for r in recs]
     df["recommended_action"] = [r.action for r in recs]
 
-    # Attach the dollar economics of acting on each customer.
+    # Attach the economics of acting on each customer.
     evs = [expected_value(p, spend, a) for p, spend, a in
            zip(df["churn_probability"], df["monthly_spend"], df["recommended_action"],
                strict=True)]
@@ -64,8 +62,8 @@ def score_dataframe(df: pd.DataFrame, model=None, rank_by: str = "net_value") ->
 
 def score_file(input_path: str, output_path: str, top: int | None = None,
                rank_by: str = "net_value") -> pd.DataFrame:
-    """Load customers, score every row, attach the next-best-action, write ranked CSV."""
-    df = load_scoring_data(input_path)  # feature prep only — no churn label required
+    """Load customers, score every row, attach actions, write a ranked CSV."""
+    df = load_scoring_data(input_path)  # feature prep only; no churn label required
     ranked = score_dataframe(df, rank_by=rank_by)
     if top:
         ranked = ranked.head(top)

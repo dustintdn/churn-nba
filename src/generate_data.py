@@ -1,14 +1,13 @@
-"""Generate a synthetic SMB-advertiser customer dataset with a churn label.
+"""Generate a synthetic SMB customer dataset with a churn label.
 
-WHY SYNTHETIC: This portfolio project targets the small/mid-size-business (SMB)
-advertising/subscription domain. Rather than depend on a Kaggle download (which
-needs credentials and is Telco-flavored), we simulate a realistic customer base
-whose churn is driven by a KNOWN logistic relationship. That lets us (a) ship a
-fully reproducible repo, and (b) sanity-check that the model and SHAP recover
-the relationships we baked in.
+Why synthetic: rather than depend on a Kaggle download (which needs credentials
+and is Telco-flavored), I simulate an SMB-advertiser customer base whose churn
+follows a known relationship. This keeps the repo fully reproducible and makes
+it possible to check that the model and SHAP recover the drivers that were
+baked in.
 
-The generated columns intentionally map to concrete retention levers so the
-next-best-action layer has something real to act on:
+The generated columns map to concrete retention levers so the next-best-action
+layer has something to act on:
     - price sensitivity      -> discount offer
     - low engagement         -> onboarding / re-engagement outreach
     - high support burden    -> proactive support call
@@ -22,7 +21,7 @@ import os
 import numpy as np
 import pandas as pd
 
-# Categorical option sets (declared once so generation + docs stay in sync).
+# Categorical option sets.
 CONTRACT_TYPES = ["Month-to-month", "Annual", "Two-year"]
 PAYMENT_METHODS = ["Credit card", "Bank transfer", "PayPal", "Manual invoice"]
 PLAN_TIERS = ["Starter", "Growth", "Pro", "Enterprise"]
@@ -62,8 +61,7 @@ def generate_customers(n: int = 6000, seed: int = 42) -> pd.DataFrame:
     has_account_manager = rng.choice([0, 1], size=n, p=[0.7, 0.3])
     nps_score = np.clip(rng.normal(30, 35, n), -100, 100).round(0)
 
-    # --- Known latent churn relationship (the "ground truth" we baked in) ---
-    # Each term is a documented business driver of SMB churn.
+    # --- Latent churn relationship (the ground truth the model should recover) ---
     score = (
         -1.4                                                   # base log-odds (low churn baseline)
         - 0.030 * tenure_months                                # loyalty: longer tenure -> stickier
@@ -84,9 +82,9 @@ def generate_customers(n: int = 6000, seed: int = 42) -> pd.DataFrame:
     )
     score = score + contract_effect
 
-    # --- Non-linear & interaction terms (real churn isn't linear-in-log-odds) ---
-    # These give a tree model something a linear baseline can't capture, so model
-    # selection becomes a meaningful comparison rather than a foregone conclusion.
+    # --- Non-linear and interaction terms ---
+    # Real churn isn't linear in log-odds; these also give a tree model
+    # structure that a linear baseline can't fully capture.
     score = (
         score
         + 0.07 * support_tickets_90d**2                        # friction accelerates, not linear
@@ -117,7 +115,7 @@ def generate_customers(n: int = 6000, seed: int = 42) -> pd.DataFrame:
         "churn": churn,
     })
 
-    # Inject a small amount of realistic missingness for the notebook to handle.
+    # Inject a small amount of missingness for the notebook to handle.
     missing_idx = rng.choice(n, size=int(0.02 * n), replace=False)
     df.loc[missing_idx, "nps_score"] = np.nan
     return df

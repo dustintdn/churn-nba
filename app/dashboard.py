@@ -1,6 +1,6 @@
-"""Streamlit dashboard — a usable consumer for the churn + NBA engine.
+"""Streamlit dashboard for the churn + NBA engine.
 
-Gives a non-engineer two ways to use the model without touching curl:
+Two ways to use the model without touching the API:
   1. Score one customer from a form and see risk + recommended action.
   2. Upload a CSV of customers and get a ranked, downloadable action worklist.
 
@@ -23,7 +23,7 @@ from src.economics import expected_value
 from src.recommend import recommend_action
 from src.train import CATEGORICAL_FEATURES, MODEL_PATH, NUMERIC_FEATURES, impute_features
 
-# Brand-consistent risk colors (match the notebook palette).
+# Risk colors, matching the notebook palette.
 TIER_COLOR = {"High": "#D1495B", "Medium": "#E8A87C", "Low": "#2E86AB"}
 
 st.set_page_config(page_title="SMB Churn + Next-Best-Action", page_icon="📉", layout="wide")
@@ -83,7 +83,7 @@ def render_batch(model):
     """CSV upload -> ranked, downloadable action worklist."""
     st.subheader("Score a customer file")
     st.caption("Upload a CSV with the standard customer columns "
-               "(see data/customers.csv). Rows are ranked by churn risk.")
+               "(see data/customers.csv). Rows are ranked by expected net value.")
     upload = st.file_uploader("Customer CSV", type="csv")
     if upload is not None:
         try:

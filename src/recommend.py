@@ -1,17 +1,14 @@
-"""Next-best-action (NBA) layer: turn a churn prediction into a decision.
+"""Next-best-action (NBA) layer: map a churn prediction to a retention action.
 
-A probability alone doesn't tell the retention team what to DO. This module maps
-the customer's strongest churn drivers to a concrete, costed intervention via a
-transparent rules layer. The rules are deliberately simple and auditable — in
-production each rule's lift would be validated with a holdout experiment before
-being trusted (see README caveats).
+Maps each customer's strongest churn driver to a concrete intervention through
+a simple, auditable rules layer. In production, each rule's lift would need
+validation with a holdout experiment (see README caveats).
 
 The driver signal can come from two places:
-  - SHAP values per feature (preferred; used in the notebook), or
-  - the raw feature values themselves (used by the API, which scores one record
-    at a time and reads the customer's risk factors directly).
+  - SHAP values per feature (used in the notebook), or
+  - the raw feature values (used by the API and batch scorer).
 
-Both paths funnel into `recommend_action`, which returns a structured decision.
+Both paths return a structured Recommendation.
 """
 
 from dataclasses import asdict, dataclass
@@ -23,7 +20,7 @@ class Recommendation:
     risk_tier: str            # Low / Medium / High
     top_driver: str           # the dominant churn risk factor
     action: str               # the recommended next-best-action
-    rationale: str            # one line the retention rep can read aloud
+    rationale: str            # one-line explanation for the retention rep
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -41,40 +38,40 @@ def risk_tier(churn_prob: float, high: float = 0.5, medium: float = 0.25) -> str
 def _identify_driver(features: dict) -> tuple[str, str, str]:
     """Inspect a raw customer record and return (driver, action, rationale).
 
-    Rules are ordered by retention priority. The FIRST matching condition wins,
-    so the customer gets the single highest-leverage action rather than a list.
+    Rules are ordered by priority; the first matching condition wins, so each
+    customer gets a single action rather than a list.
     """
-    # 1) Price shock — the clearest, most addressable churn trigger.
+    # 1) Price shock: the most directly addressable trigger.
     if features.get("price_increase_recent", 0) == 1 and features.get("discount_pct", 0) < 10:
         return ("Recent price increase",
                 "Offer a loyalty discount / lock-in pricing",
                 "Customer absorbed a recent price increase with little existing discount.")
 
-    # 2) High support friction — fix the experience before they leave.
+    # 2) High support friction.
     if features.get("support_tickets_90d", 0) >= 3:
         return ("High support burden",
                 "Proactive support call from a senior rep",
                 "Elevated support volume signals unresolved friction.")
 
-    # 3) Disengagement — they've stopped showing up.
+    # 3) Disengagement: usage has dropped off.
     if features.get("last_login_days", 0) >= 21 or features.get("logins_per_week", 99) < 2:
         return ("Low engagement",
                 "Re-engagement / onboarding outreach",
                 "Login activity has dropped well below a healthy cadence.")
 
-    # 4) No commitment — convert month-to-month into a committed contract.
+    # 4) No contractual commitment.
     if features.get("contract_type") == "Month-to-month":
         return ("Month-to-month contract",
                 "Incentivize an annual contract upgrade",
                 "No contractual commitment makes this customer easy to lose.")
 
-    # 5) High value with no human owner — assign coverage.
+    # 5) High-value account with no account manager.
     if features.get("monthly_spend", 0) >= 1000 and features.get("has_account_manager", 0) == 0:
         return ("High value, unmanaged",
                 "Assign a dedicated account manager",
                 "High-spend account has no dedicated relationship owner.")
 
-    # 6) Detractor — sentiment is the lever.
+    # 6) NPS detractor.
     if features.get("nps_score", 0) <= 0:
         return ("Low satisfaction (NPS)",
                 "Executive check-in to rebuild trust",
@@ -87,10 +84,9 @@ def _identify_driver(features: dict) -> tuple[str, str, str]:
 
 
 def recommend_action(churn_prob: float, features: dict) -> Recommendation:
-    """Top-level entry point used by the API: prob + raw record -> Recommendation.
+    """Entry point used by the API: probability + raw record -> Recommendation.
 
-    Low-risk customers get a 'monitor' action rather than a costly intervention,
-    so the team spends retention budget where it moves the needle.
+    Low-risk customers get a 'monitor' action rather than a costly intervention.
     """
     tier = risk_tier(churn_prob)
     if tier == "Low":
@@ -109,9 +105,8 @@ def recommend_from_shap(churn_prob: float, features: dict,
                         shap_values: dict, top_k: int = 1) -> Recommendation:
     """SHAP-driven variant used in the notebook.
 
-    Picks the feature(s) pushing risk UP the most for THIS customer, then reuses
-    the same rule mapping. This keeps the notebook's explanation and the API's
-    decision logic consistent.
+    Picks the features pushing risk up the most for this customer, then reuses
+    the same rule mapping as recommend_action.
     """
     tier = risk_tier(churn_prob)
     if tier == "Low":
