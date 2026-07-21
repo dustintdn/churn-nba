@@ -30,13 +30,19 @@ artifact and served by FastAPI, so training and serving share the same code path
   PR-AUC 0.57 against a ~17% base churn rate, about a 3.4x lift. Probabilities are
   isotonic-calibrated, so a 30% score corresponds to roughly 30% observed churn.
 - **At the decision threshold:** if the retention team works the top 15% of accounts
-  by risk, they reach ~52% of all churners at ~58% precision, versus 17% precision
+  by risk, they reach ~51% of all churners at ~57% precision, versus 17% precision
   calling at random.
 - **Ranking by dollars beats ranking by risk:** ordering the worklist by expected
-  net value instead of churn probability captures ~58% more retention value at the
-  same team capacity (about $142k vs $90k on the held-out set in the notebook).
+  net value instead of churn probability captures ~48% more retention value at the
+  same team capacity (about $138k vs $94k on the held-out set in the notebook).
   A moderate-risk account spending $2,000/mo is usually worth more attention than
   a near-certain churner spending $100/mo.
+- **The conclusions survive stress-testing:** because the data is synthetic, the model
+  can be compared to the true data-generating process — it reaches ROC-AUC 0.842
+  against an oracle ceiling of 0.853, recovers the main baked-in interaction (price
+  increase × low tenure), and visibly underfits the rarest threshold effect. A
+  sensitivity sweep shows the value-ranked worklist beats probability ranking across
+  the full grid of margin and lift assumptions (details in the notebook's Phase 7).
 
 ## From Prediction to Action
 
@@ -183,7 +189,7 @@ churn-nba-dev/
 │   ├── README.md              # data dictionary (column definitions)
 │   └── customers.csv          # synthetic SMB customer dataset
 ├── notebooks/
-│   └── churn_analysis.ipynb   # 5-phase analysis (EDA -> model -> SHAP -> NBA)
+│   └── churn_analysis.ipynb   # full analysis (EDA -> model -> SHAP -> NBA -> economics -> robustness)
 ├── app/
 │   └── dashboard.py           # Streamlit consumer (single + batch scoring)
 ├── src/

@@ -47,8 +47,11 @@ Held-out test set (1,200 customers). Metrics emphasize the minority (churn) clas
 | **XGBoost (tuned) — deployed** | **0.574** | **0.843** |
 
 - **PR-AUC 0.57** vs. a 0.168 base rate ≈ **3.4× lift**.
-- **Operating point:** targeting the top 15% of accounts by risk catches ~52% of
-  churners at ~58% precision.
+- **Operating point:** targeting the top 15% of accounts by risk catches ~51% of
+  churners at ~57% precision (notebook re-run; small variation across runs).
+- **Recovery check:** on the synthetic data the model reaches ROC-AUC 0.842 against
+  an oracle ceiling of 0.853 computed from the true data-generating process
+  (notebook Phase 7).
 - **Calibration:** isotonic; predicted probabilities track observed churn frequency
   (calibration curve in the notebook).
 
